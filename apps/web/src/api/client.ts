@@ -1,6 +1,9 @@
+// 未设置时默认本地 API；显式空字符串表示与页面同源（生产 Nginx 反代 /api）
+const _viteApi = import.meta.env.VITE_API_BASE_URL;
 const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://localhost:8787";
+  _viteApi === undefined
+    ? "http://localhost:8787"
+    : String(_viteApi).replace(/\/$/, "");
 
 const TOKEN_KEY = "progress_token";
 

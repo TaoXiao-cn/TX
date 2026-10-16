@@ -98,12 +98,36 @@ docker-compose.yml
 
 服务端 PDF 会尝试加载系统 CJK 字体（如 Linux 上的 `DroidSansFallbackFull.ttf` / 文泉驿）。若导出 PDF 缺字，请安装对应字体后重启 API。
 
-## Git / PR
+## 腾讯云公网部署
 
-当前 Cloud Agent 环境未关联 GitHub remote。Sean 可在 GitHub 建空仓库后：
+Sean 已选定 **腾讯云 + 全量公网部署（方案 B）**。完整步骤（架构、控制台清单、环境变量映射、安全与验收）见项目文档：
+
+- **部署方案：** Cursor Project 商店 `docs/tencent-cloud-deploy.md`
+- **产品方案（含托管决策）：** 同目录 `docs/product-plan.md`
+
+本仓库生产向文件：
+
+| 文件 | 用途 |
+|------|------|
+| `docker-compose.prod.yml` | 仅 API + Nginx 前端；库与 COS 用云端 |
+| `apps/api/Dockerfile` | API 生产镜像 |
+| `apps/web/Dockerfile` + `nginx.conf` | 静态站 + `/api` 反代 |
+| `.env.example` | 含腾讯云 COS 注释；复制为服务器上的 `.env.prod`（勿提交） |
+
+服务器上摘要：
 
 ```bash
-git remote add origin <你的仓库 URL>
+cp .env.example .env.prod   # 按部署方案填写；密钥勿提交、勿发聊天
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api node dist/db/migrate.js
+```
+
+COS 生产务必 `S3_FORCE_PATH_STYLE=false`；防火墙公网仅开 80/443/22（22 限 IP）。
+
+## Git / PR
+
+```bash
 git push -u origin cursor/mvp-scaffold-1a38
-# 再在 GitHub 上从该分支开 PR
+# 生产准备分支（若已创建）：
+git push -u origin cursor/tencent-deploy-prep-ff7a
 ```

@@ -1,0 +1,37 @@
+# 生产：仅 API + Web（Nginx）。Postgres / COS 使用腾讯云托管，勿在本文件再起本地库。
+# 用法（在服务器上）：
+#   cp .env.example .env.prod   # 按部署方案填写；切勿提交、勿发到聊天
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api node dist/db/migrate.js
+#   # 可选演示数据（生产建议跳过或事后改密）：
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api node dist/db/seed.js
+#
+# 部署方案（项目文档）：docs/tencent-cloud-deploy.md（Cursor Project 商店）
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: progress-api
+    env_file:
+      - .env.prod
+    environment:
+      PORT: "8787"
+    expose:
+      - "8787"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # 默认同源；若前端与 API 不同源，在 .env.prod 设 VITE_API_BASE_URL 后重新 build
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    container_name: progress-web
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
