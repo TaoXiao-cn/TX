@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: progress-postgres
+    environment:
+      POSTGRES_USER: progress
+      POSTGRES_PASSWORD: progress
+      POSTGRES_DB: progress
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U progress -d progress"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # S3 兼容对象存储（本地开发）。生产可改为真实 S3 / R2 / OSS 等，只改 .env。
+  # 说明：部分环境无法拉取 minio/minio，故默认使用 adobe/s3mock。
+  # 若你本机可用 MinIO，可自行替换为 minio/minio 并保留同一组 S3_* 环境变量。
+  s3:
+    image: adobe/s3mock:3.12.0
+    container_name: progress-s3
+    environment:
+      initialBuckets: attachments
+      COM_ADOBE_TESTING_S3MOCK_STORE_REGION: us-east-1
+    ports:
+      - "9000:9090"
+    volumes:
+      - s3_data:/tmp/s3a
+
+volumes:
+  postgres_data:
+  s3_data:

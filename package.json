@@ -1,0 +1,16 @@
+{
+  "name": "project-progress",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @project-progress/api & npm run dev -w @project-progress/web",
+    "dev:api": "npm run dev -w @project-progress/api",
+    "dev:web": "npm run dev -w @project-progress/web",
+    "build": "npm run build -w @project-progress/api && npm run build -w @project-progress/web",
+    "db:migrate": "npm run db:migrate -w @project-progress/api",
+    "db:seed": "npm run db:seed -w @project-progress/api",
+    "setup": "npm install && npm run db:migrate && npm run db:seed"
+  }
+}
