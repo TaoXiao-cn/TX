@@ -38,10 +38,15 @@ export type ExportEntry = {
   attachments: ExportAttachment[];
 };
 
+export type ExportDirection = {
+  title: string;
+  entries: ExportEntry[];
+};
+
 export type ExportProject = {
   title: string;
   description: string;
-  entries: ExportEntry[];
+  directions: ExportDirection[];
 };
 
 function stripHtml(html: string) {
@@ -70,6 +75,10 @@ function formatDay(iso: string) {
   });
 }
 
+function allEntries(project: ExportProject): ExportEntry[] {
+  return project.directions.flatMap((d) => d.entries);
+}
+
 export function toMarkdown(project: ExportProject): string {
   const lines: string[] = [
     `# ${project.title}`,
@@ -79,17 +88,28 @@ export function toMarkdown(project: ExportProject): string {
     "",
   ];
 
-  for (const entry of project.entries) {
-    lines.push(`## ${formatDay(entry.createdAt)}`);
+  for (const direction of project.directions) {
+    lines.push(`## ${direction.title}`);
     lines.push("");
-    lines.push(stripHtml(entry.contentHtml) || "（空内容）");
-    lines.push("");
-    if (entry.attachments.length) {
-      lines.push("### 附件");
-      for (const a of entry.attachments) {
-        lines.push(`- ${a.fileName} (${a.mimeType})`);
-      }
+    if (direction.entries.length === 0) {
+      lines.push("（暂无进度）");
       lines.push("");
+      lines.push("---");
+      lines.push("");
+      continue;
+    }
+    for (const entry of direction.entries) {
+      lines.push(`### ${formatDay(entry.createdAt)}`);
+      lines.push("");
+      lines.push(stripHtml(entry.contentHtml) || "（空内容）");
+      lines.push("");
+      if (entry.attachments.length) {
+        lines.push("#### 附件");
+        for (const a of entry.attachments) {
+          lines.push(`- ${a.fileName} (${a.mimeType})`);
+        }
+        lines.push("");
+      }
     }
     lines.push("---");
     lines.push("");
@@ -100,7 +120,7 @@ export function toMarkdown(project: ExportProject): string {
 
 async function loadImageBuffers(project: ExportProject) {
   const map = new Map<string, Buffer>();
-  for (const entry of project.entries) {
+  for (const entry of allEntries(project)) {
     for (const a of entry.attachments) {
       if (a.mimeType.startsWith("image/")) {
         try {
@@ -112,6 +132,52 @@ async function loadImageBuffers(project: ExportProject) {
     }
   }
   return map;
+}
+
+function appendEntryDocx(
+  children: Paragraph[],
+  entry: ExportEntry,
+  images: Map<string, Buffer>,
+  heading: (typeof HeadingLevel)[keyof typeof HeadingLevel] = HeadingLevel.HEADING_3,
+) {
+  children.push(
+    new Paragraph({
+      text: formatDay(entry.createdAt),
+      heading,
+    }),
+  );
+  const text = stripHtml(entry.contentHtml) || "（空内容）";
+  for (const line of text.split("\n")) {
+    children.push(new Paragraph({ children: [new TextRun(line)] }));
+  }
+  for (const a of entry.attachments) {
+    const buf = images.get(a.id);
+    if (buf) {
+      children.push(
+        new Paragraph({
+          children: [
+            new ImageRun({
+              data: buf,
+              transformation: { width: 480, height: 320 },
+              type: a.mimeType.includes("png")
+                ? "png"
+                : a.mimeType.includes("gif")
+                  ? "gif"
+                  : "jpg",
+            }),
+          ],
+        }),
+      );
+    } else {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: `附件：${a.fileName}`, italics: true }),
+          ],
+        }),
+      );
+    }
+  }
 }
 
 export async function toDocx(project: ExportProject): Promise<Buffer> {
@@ -131,44 +197,23 @@ export async function toDocx(project: ExportProject): Promise<Buffer> {
     );
   }
 
-  for (const entry of project.entries) {
+  for (const direction of project.directions) {
     children.push(
       new Paragraph({
-        text: formatDay(entry.createdAt),
-        heading: HeadingLevel.HEADING_2,
+        text: direction.title,
+        heading: HeadingLevel.HEADING_1,
       }),
     );
-    const text = stripHtml(entry.contentHtml) || "（空内容）";
-    for (const line of text.split("\n")) {
-      children.push(new Paragraph({ children: [new TextRun(line)] }));
+    if (direction.entries.length === 0) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: "（暂无进度）", italics: true })],
+        }),
+      );
+      continue;
     }
-    for (const a of entry.attachments) {
-      const buf = images.get(a.id);
-      if (buf) {
-        children.push(
-          new Paragraph({
-            children: [
-              new ImageRun({
-                data: buf,
-                transformation: { width: 480, height: 320 },
-                type: a.mimeType.includes("png")
-                  ? "png"
-                  : a.mimeType.includes("gif")
-                    ? "gif"
-                    : "jpg",
-              }),
-            ],
-          }),
-        );
-      } else {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({ text: `附件：${a.fileName}`, italics: true }),
-            ],
-          }),
-        );
-      }
+    for (const entry of direction.entries) {
+      appendEntryDocx(children, entry, images);
     }
   }
 
@@ -211,41 +256,56 @@ export async function toPdf(project: ExportProject): Promise<Buffer> {
       doc.moveDown();
     }
 
-    for (const entry of project.entries) {
-      useFont(13);
-      doc.fillColor("#1677ff").text(formatDay(entry.createdAt));
+    for (const direction of project.directions) {
+      useFont(16);
+      doc.fillColor("#1f6f5b").text(direction.title);
       doc.fillColor("#000");
-      doc.moveDown(0.3);
-      useFont(11);
-      doc.text(stripHtml(entry.contentHtml) || "（空内容）", {
-        align: "left",
-      });
-      doc.moveDown(0.5);
+      doc.moveDown(0.4);
 
-      for (const a of entry.attachments) {
-        const buf = images.get(a.id);
-        if (buf) {
-          try {
-            doc.image(buf, { fit: [480, 320] });
-            doc.moveDown(0.5);
-          } catch {
+      if (direction.entries.length === 0) {
+        useFont(11);
+        doc.fillColor("#666").text("（暂无进度）");
+        doc.fillColor("#000");
+        doc.moveDown();
+        continue;
+      }
+
+      for (const entry of direction.entries) {
+        useFont(13);
+        doc.fillColor("#1677ff").text(formatDay(entry.createdAt));
+        doc.fillColor("#000");
+        doc.moveDown(0.3);
+        useFont(11);
+        doc.text(stripHtml(entry.contentHtml) || "（空内容）", {
+          align: "left",
+        });
+        doc.moveDown(0.5);
+
+        for (const a of entry.attachments) {
+          const buf = images.get(a.id);
+          if (buf) {
+            try {
+              doc.image(buf, { fit: [480, 320] });
+              doc.moveDown(0.5);
+            } catch {
+              useFont(10);
+              doc.fillColor("#666").text(`附件：${a.fileName}`);
+              doc.fillColor("#000");
+            }
+          } else {
             useFont(10);
             doc.fillColor("#666").text(`附件：${a.fileName}`);
             doc.fillColor("#000");
           }
-        } else {
-          useFont(10);
-          doc.fillColor("#666").text(`附件：${a.fileName}`);
-          doc.fillColor("#000");
         }
+        doc.moveDown();
+        doc
+          .strokeColor("#dddddd")
+          .moveTo(50, doc.y)
+          .lineTo(545, doc.y)
+          .stroke();
+        doc.moveDown();
       }
-      doc.moveDown();
-      doc
-        .strokeColor("#dddddd")
-        .moveTo(50, doc.y)
-        .lineTo(545, doc.y)
-        .stroke();
-      doc.moveDown();
     }
 
     doc.end();

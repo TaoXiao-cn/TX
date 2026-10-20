@@ -80,9 +80,10 @@ npm run dev:web
 
 1. 注册 / 登录 / 登出
 2. 课题：创建、重命名、归档、列表
-3. 进度条目：TipTap 富文本、图片与附件、时间轴按日分隔；编辑只更新 `updatedAt`
-4. 导出：Markdown / DOCX / PDF
-5. 本地 `docker compose` 一键起库与对象存储
+3. **子课题方向**：课题下可建多个方向；进度归属所选方向；可重命名/归档
+4. 进度条目：TipTap 富文本、图片与附件、时间轴按日分隔；编辑只更新 `updatedAt`
+5. 导出：整课题（按方向分组）或单方向 · Markdown / DOCX / PDF
+6. 本地 `docker compose` 一键起库与对象存储
 
 ## 仓库结构
 

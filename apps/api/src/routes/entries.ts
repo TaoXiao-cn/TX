@@ -8,6 +8,7 @@ import {
   putObject,
   publicUrlFor,
 } from "../lib/s3.js";
+import { assertDirectionOwned } from "./directions.js";
 
 type Vars = { user: AuthUser };
 
@@ -38,14 +39,6 @@ entryRoutes.use("*", async (c, next) => {
   return requireAuth(c, next);
 });
 
-async function assertProjectOwned(projectId: string, userId: string) {
-  const result = await pool.query(
-    `SELECT id FROM projects WHERE id = $1 AND owner_user_id = $2`,
-    [projectId, userId],
-  );
-  return Boolean(result.rows[0]);
-}
-
 function mapAttachment(row: Record<string, unknown>) {
   const id = String(row.id);
   return {
@@ -68,6 +61,7 @@ function mapEntry(
   return {
     id: row.id,
     projectId: row.project_id,
+    directionId: row.direction_id,
     contentJson: row.content_json,
     contentHtml: row.content_html,
     createdAt: row.created_at,
@@ -76,18 +70,12 @@ function mapEntry(
   };
 }
 
-entryRoutes.get("/projects/:projectId/entries", async (c) => {
-  const user = c.get("user");
-  const projectId = c.req.param("projectId");
-  if (!(await assertProjectOwned(projectId, user.id))) {
-    return c.json({ error: "课题不存在" }, 404);
-  }
-
+async function loadEntriesForDirection(directionId: string) {
   const entries = await pool.query(
     `SELECT * FROM progress_entries
-     WHERE project_id = $1
+     WHERE direction_id = $1
      ORDER BY created_at DESC`,
-    [projectId],
+    [directionId],
   );
   const ids = entries.rows.map((r) => r.id);
   let attachmentsByEntry = new Map<string, ReturnType<typeof mapAttachment>[]>();
@@ -104,18 +92,29 @@ entryRoutes.get("/projects/:projectId/entries", async (c) => {
     }, new Map<string, ReturnType<typeof mapAttachment>[]>());
   }
 
+  return entries.rows.map((row) =>
+    mapEntry(row, attachmentsByEntry.get(row.id) ?? []),
+  );
+}
+
+entryRoutes.get("/directions/:directionId/entries", async (c) => {
+  const user = c.get("user");
+  const directionId = c.req.param("directionId");
+  if (!(await assertDirectionOwned(directionId, user.id))) {
+    return c.json({ error: "方向不存在" }, 404);
+  }
+
   return c.json({
-    entries: entries.rows.map((row) =>
-      mapEntry(row, attachmentsByEntry.get(row.id) ?? []),
-    ),
+    entries: await loadEntriesForDirection(directionId),
   });
 });
 
-entryRoutes.post("/projects/:projectId/entries", async (c) => {
+entryRoutes.post("/directions/:directionId/entries", async (c) => {
   const user = c.get("user");
-  const projectId = c.req.param("projectId");
-  if (!(await assertProjectOwned(projectId, user.id))) {
-    return c.json({ error: "课题不存在" }, 404);
+  const directionId = c.req.param("directionId");
+  const direction = await assertDirectionOwned(directionId, user.id);
+  if (!direction) {
+    return c.json({ error: "方向不存在" }, 404);
   }
 
   const body = await c.req.json<{
@@ -124,18 +123,22 @@ entryRoutes.post("/projects/:projectId/entries", async (c) => {
   }>();
 
   const result = await pool.query(
-    `INSERT INTO progress_entries (project_id, content_json, content_html)
-     VALUES ($1, $2::jsonb, $3)
+    `INSERT INTO progress_entries (project_id, direction_id, content_json, content_html)
+     VALUES ($1, $2, $3::jsonb, $4)
      RETURNING *`,
     [
-      projectId,
+      direction.project_id,
+      directionId,
       JSON.stringify(body.contentJson ?? { type: "doc", content: [] }),
       body.contentHtml ?? "",
     ],
   );
 
   await pool.query(`UPDATE projects SET updated_at = NOW() WHERE id = $1`, [
-    projectId,
+    direction.project_id,
+  ]);
+  await pool.query(`UPDATE directions SET updated_at = NOW() WHERE id = $1`, [
+    directionId,
   ]);
 
   return c.json({ entry: mapEntry(result.rows[0], []) }, 201);

@@ -37,13 +37,29 @@ projectRoutes.post("/", async (c) => {
   const title = body.title?.trim();
   if (!title) return c.json({ error: "课题名称不能为空" }, 400);
 
-  const result = await pool.query(
-    `INSERT INTO projects (owner_user_id, title, description)
-     VALUES ($1, $2, $3)
-     RETURNING *`,
-    [user.id, title, body.description?.trim() ?? ""],
-  );
-  return c.json({ project: mapProject(result.rows[0]) }, 201);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO projects (owner_user_id, title, description)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [user.id, title, body.description?.trim() ?? ""],
+    );
+    const project = result.rows[0];
+    await client.query(
+      `INSERT INTO directions (project_id, title, description)
+       VALUES ($1, $2, $3)`,
+      [project.id, "默认方向", ""],
+    );
+    await client.query("COMMIT");
+    return c.json({ project: mapProject(project) }, 201);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
 projectRoutes.patch("/:id", async (c) => {
