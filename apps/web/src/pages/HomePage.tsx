@@ -18,7 +18,7 @@ import { Navigate } from "react-router-dom";
 import dayjs from "dayjs";
 import { api, type ProgressEntry, type Project } from "../api/client";
 import { useAuth } from "../lib/auth";
-import { RichEditor } from "../components/RichEditor";
+import { EMPTY_DOC, RichEditor } from "../components/RichEditor";
 
 function dayKey(iso: string) {
   return dayjs(iso).format("YYYY-MM-DD");
@@ -31,10 +31,7 @@ export function HomePage() {
   const [filter, setFilter] = useState<"active" | "archived">("active");
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [entries, setEntries] = useState<ProgressEntry[]>([]);
-  const [draftJson, setDraftJson] = useState<unknown>({
-    type: "doc",
-    content: [{ type: "paragraph" }],
-  });
+  const [draftJson, setDraftJson] = useState<unknown>(EMPTY_DOC);
   const [draftHtml, setDraftHtml] = useState("<p></p>");
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<ProgressEntry | null>(null);
@@ -163,7 +160,7 @@ export function HomePage() {
         await api.createEntry(currentId, draftJson, draftHtml);
         message.success("已添加进度");
       }
-      setDraftJson({ type: "doc", content: [{ type: "paragraph" }] });
+      setDraftJson(EMPTY_DOC);
       setDraftHtml("<p></p>");
       await loadEntries(currentId);
     } catch (err) {
@@ -318,12 +315,7 @@ export function HomePage() {
               <div style={{ marginTop: 10 }}>
                 <RichEditor
                   key={editing?.id ?? "new"}
-                  initialJson={
-                    editing?.contentJson ?? {
-                      type: "doc",
-                      content: [{ type: "paragraph" }],
-                    }
-                  }
+                  initialJson={editing?.contentJson ?? EMPTY_DOC}
                   onChange={(json, html) => {
                     setDraftJson(json);
                     setDraftHtml(html);
@@ -338,10 +330,7 @@ export function HomePage() {
                   <Button
                     onClick={() => {
                       setEditing(null);
-                      setDraftJson({
-                        type: "doc",
-                        content: [{ type: "paragraph" }],
-                      });
+                      setDraftJson(EMPTY_DOC);
                       setDraftHtml("<p></p>");
                     }}
                   >

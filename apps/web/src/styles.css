@@ -131,6 +131,9 @@ a {
   min-height: 140px;
   outline: none;
   line-height: 1.7;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .ProseMirror p {
@@ -140,6 +143,15 @@ a {
 .ProseMirror img {
   max-width: 100%;
   border-radius: 8px;
+}
+
+/* TipTap Placeholder：缺此样式时占位符不显示；勿用 color:transparent 伪装 */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: #8aa399;
 }
 
 .editor-shell {

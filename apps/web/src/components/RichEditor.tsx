@@ -11,9 +11,15 @@ import {
   UnorderedListOutlined,
   PictureOutlined,
 } from "@ant-design/icons";
-import { useEffect } from "react";
+
+/** 空文档常量：避免父组件每次 render 传入新对象字面量 */
+export const EMPTY_DOC = {
+  type: "doc",
+  content: [{ type: "paragraph" }],
+} as const;
 
 type Props = {
+  /** 仅在挂载时作为初始内容；切换条目请用 key 强制重挂载，勿在输入时改写 */
   initialJson?: unknown;
   placeholder?: string;
   onChange?: (json: unknown, html: string) => void;
@@ -33,23 +39,12 @@ export function RichEditor({
       Link.configure({ openOnClick: false }),
       Placeholder.configure({ placeholder }),
     ],
-    content: (initialJson as object) || {
-      type: "doc",
-      content: [{ type: "paragraph" }],
-    },
+    // 初始内容只读一次；父级 onChange → setState 不得再 setContent，否则会清空刚输入的字
+    content: (initialJson as object) || EMPTY_DOC,
     onUpdate: ({ editor: ed }) => {
       onChange?.(ed.getJSON(), ed.getHTML());
     },
   });
-
-  useEffect(() => {
-    if (!editor || !initialJson) return;
-    const current = JSON.stringify(editor.getJSON());
-    const next = JSON.stringify(initialJson);
-    if (current !== next) {
-      editor.commands.setContent(initialJson as object);
-    }
-  }, [editor, initialJson]);
 
   if (!editor) return null;
 
