@@ -1,8 +1,11 @@
 import { Hono } from "hono";
 import { pool } from "../db/pool.js";
 import { requireAuth, type AuthUser } from "../lib/auth.js";
+import { deleteObjectsBestEffort } from "../lib/s3.js";
 
 type Vars = { user: AuthUser };
+
+const DEFAULT_DIRECTION_TITLE = "默认方向";
 
 export const directionRoutes = new Hono<{ Variables: Vars }>();
 
@@ -18,6 +21,17 @@ export function mapDirection(row: Record<string, unknown>) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function attachmentKeysForDirection(directionId: string) {
+  const result = await pool.query(
+    `SELECT a.storage_key
+     FROM attachments a
+     JOIN progress_entries e ON e.id = a.entry_id
+     WHERE e.direction_id = $1`,
+    [directionId],
+  );
+  return result.rows.map((r) => r.storage_key as string);
 }
 
 async function assertProjectOwned(projectId: string, userId: string) {
@@ -120,4 +134,58 @@ directionRoutes.get("/directions/:id", async (c) => {
   const owned = await assertDirectionOwned(id, user.id);
   if (!owned) return c.json({ error: "方向不存在" }, 404);
   return c.json({ direction: mapDirection(owned) });
+});
+
+/**
+ * 硬删除方向：级联该方向下进度与附件元数据；对象存储 best-effort。
+ * 若删的是课题下最后一个方向，自动新建「默认方向」，避免课题悬空。
+ */
+directionRoutes.delete("/directions/:id", async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+  const owned = await assertDirectionOwned(id, user.id);
+  if (!owned) return c.json({ error: "方向不存在" }, 404);
+
+  const projectId = owned.project_id as string;
+  const keys = await attachmentKeysForDirection(id);
+
+  const client = await pool.connect();
+  let createdDefault: Record<string, unknown> | null = null;
+  try {
+    await client.query("BEGIN");
+    const countRes = await client.query(
+      `SELECT COUNT(*)::int AS n FROM directions WHERE project_id = $1`,
+      [projectId],
+    );
+    const wasLast = (countRes.rows[0].n as number) <= 1;
+
+    await client.query(`DELETE FROM directions WHERE id = $1`, [id]);
+
+    if (wasLast) {
+      const inserted = await client.query(
+        `INSERT INTO directions (project_id, title, description)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [projectId, DEFAULT_DIRECTION_TITLE, "删除上一方向后自动创建"],
+      );
+      createdDefault = inserted.rows[0];
+    }
+
+    await client.query(`UPDATE projects SET updated_at = NOW() WHERE id = $1`, [
+      projectId,
+    ]);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  await deleteObjectsBestEffort(keys);
+
+  return c.json({
+    ok: true,
+    createdDefault: createdDefault ? mapDirection(createdDefault) : null,
+  });
 });

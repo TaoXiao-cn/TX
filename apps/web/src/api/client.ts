@@ -152,6 +152,11 @@ export const api = {
   getProject(id: string) {
     return request<{ project: Project }>(`/api/projects/${id}`);
   },
+  deleteProject(id: string) {
+    return request<{ ok: boolean }>(`/api/projects/${id}`, {
+      method: "DELETE",
+    });
+  },
   listDirections(
     projectId: string,
     status: "active" | "archived" | "all" = "active",
@@ -177,6 +182,12 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+  },
+  deleteDirection(id: string) {
+    return request<{ ok: boolean; createdDefault: Direction | null }>(
+      `/api/directions/${id}`,
+      { method: "DELETE" },
+    );
   },
   async listEntries(directionId: string) {
     const res = await request<{ entries: ProgressEntry[] }>(
