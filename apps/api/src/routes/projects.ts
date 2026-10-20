@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { pool } from "../db/pool.js";
 import { requireAuth, type AuthUser } from "../lib/auth.js";
+import { deleteObjectsBestEffort } from "../lib/s3.js";
 
 type Vars = { user: AuthUser };
 
@@ -17,6 +18,17 @@ function mapProject(row: Record<string, unknown>) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function attachmentKeysForProject(projectId: string) {
+  const result = await pool.query(
+    `SELECT a.storage_key
+     FROM attachments a
+     JOIN progress_entries e ON e.id = a.entry_id
+     WHERE e.project_id = $1`,
+    [projectId],
+  );
+  return result.rows.map((r) => r.storage_key as string);
 }
 
 projectRoutes.get("/", async (c) => {
@@ -104,4 +116,20 @@ projectRoutes.get("/:id", async (c) => {
   );
   if (!result.rows[0]) return c.json({ error: "课题不存在" }, 404);
   return c.json({ project: mapProject(result.rows[0]) });
+});
+
+/** 硬删除课题：级联方向 / 进度 / 附件元数据；对象存储 best-effort 清理。 */
+projectRoutes.delete("/:id", async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+  const owned = await pool.query(
+    `SELECT id FROM projects WHERE id = $1 AND owner_user_id = $2`,
+    [id, user.id],
+  );
+  if (!owned.rows[0]) return c.json({ error: "课题不存在" }, 404);
+
+  const keys = await attachmentKeysForProject(id);
+  await pool.query(`DELETE FROM projects WHERE id = $1`, [id]);
+  await deleteObjectsBestEffort(keys);
+  return c.json({ ok: true });
 });

@@ -60,6 +60,17 @@ export async function deleteObject(key: string) {
   );
 }
 
+/** 对象存储清理失败不影响主流程（库内已删）。 */
+export async function deleteObjectsBestEffort(keys: string[]) {
+  for (const key of keys) {
+    try {
+      await deleteObject(key);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
 export async function getObjectBuffer(key: string): Promise<Buffer> {
   const res = await s3.send(
     new GetObjectCommand({

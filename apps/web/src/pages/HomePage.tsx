@@ -195,6 +195,30 @@ export function HomePage() {
     await loadProjects();
   }
 
+  function deleteProject() {
+    if (!current) return;
+    const title = current.title;
+    const id = current.id;
+    modal.confirm({
+      title: "删除课题？",
+      content: (
+        <Typography.Paragraph style={{ marginBottom: 0 }}>
+          确定永久删除课题「<Typography.Text strong>{title}</Typography.Text>
+          」及其全部方向、进度与附件？此操作不可恢复。
+        </Typography.Paragraph>
+      ),
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        await api.deleteProject(id);
+        message.success("课题已删除");
+        setCurrentId(null);
+        await loadProjects();
+      },
+    });
+  }
+
   async function createDirection() {
     if (!currentId) return;
     let title = "";
@@ -259,6 +283,41 @@ export function HomePage() {
       currentDirection.status === "active" ? "方向已归档" : "方向已恢复",
     );
     await loadDirections(currentId);
+  }
+
+  function deleteDirection() {
+    if (!currentDirection || !currentId) return;
+    const title = currentDirection.title;
+    const id = currentDirection.id;
+    const projectId = currentId;
+    const isLast = directions.length === 1;
+    modal.confirm({
+      title: "删除方向？",
+      content: (
+        <Typography.Paragraph style={{ marginBottom: 0 }}>
+          确定永久删除方向「<Typography.Text strong>{title}</Typography.Text>
+          」及其全部进度与附件？此操作不可恢复。
+          {isLast
+            ? " 这是当前课题的最后一个方向，删除后将自动创建「默认方向」。"
+            : ""}
+        </Typography.Paragraph>
+      ),
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        const res = await api.deleteDirection(id);
+        if (res.createdDefault) {
+          message.success("方向已删除，已自动创建「默认方向」");
+          setDirectionFilter("active");
+          await loadDirections(projectId);
+          setCurrentDirectionId(res.createdDefault.id);
+        } else {
+          message.success("方向已删除");
+          await loadDirections(projectId);
+        }
+      },
+    });
   }
 
   async function saveEntry() {
@@ -385,6 +444,9 @@ export function HomePage() {
                 <Button onClick={archiveProject}>
                   {current.status === "active" ? "归档" : "取消归档"}
                 </Button>
+                <Button danger onClick={deleteProject}>
+                  删除
+                </Button>
                 <Dropdown
                   menu={{
                     items: [
@@ -491,6 +553,9 @@ export function HomePage() {
                         {currentDirection.status === "active"
                           ? "归档方向"
                           : "恢复方向"}
+                      </Button>
+                      <Button size="small" danger onClick={deleteDirection}>
+                        删除方向
                       </Button>
                     </>
                   )}
