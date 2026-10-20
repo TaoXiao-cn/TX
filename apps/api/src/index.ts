@@ -5,6 +5,7 @@ import { env } from "./lib/env.js";
 import { ensureBucket } from "./lib/s3.js";
 import { authRoutes } from "./routes/auth.js";
 import { projectRoutes } from "./routes/projects.js";
+import { directionRoutes } from "./routes/directions.js";
 import { entryRoutes } from "./routes/entries.js";
 import { exportRoutes } from "./routes/export.js";
 
@@ -23,6 +24,7 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 app.route("/api/auth", authRoutes);
 app.route("/api/projects", projectRoutes);
+app.route("/api", directionRoutes);
 app.route("/api", entryRoutes);
 app.route("/api", exportRoutes);
 

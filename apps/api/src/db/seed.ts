@@ -31,11 +31,19 @@ async function main() {
     );
     projectId = project.rows[0].id;
 
+    const direction = await pool.query(
+      `INSERT INTO directions (project_id, title, description)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [projectId, "默认方向", "演示用子课题方向"],
+    );
+    const directionId = direction.rows[0].id as string;
+
     await pool.query(
-      `INSERT INTO progress_entries (project_id, content_json, content_html)
-       VALUES ($1, $2::jsonb, $3)`,
+      `INSERT INTO progress_entries (project_id, direction_id, content_json, content_html)
+       VALUES ($1, $2, $3::jsonb, $4)`,
       [
         projectId,
+        directionId,
         JSON.stringify({
           type: "doc",
           content: [

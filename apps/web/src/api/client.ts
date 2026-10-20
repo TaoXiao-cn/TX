@@ -22,6 +22,16 @@ export type Project = {
   updatedAt: string;
 };
 
+export type Direction = {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  status: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Attachment = {
   id: string;
   fileName: string;
@@ -41,6 +51,7 @@ function absoluteAttachmentUrl(url: string) {
 export type ProgressEntry = {
   id: string;
   projectId: string;
+  directionId: string;
   contentJson: unknown;
   contentHtml: string;
   createdAt: string;
@@ -87,6 +98,21 @@ async function request<T>(
   return res as unknown as T;
 }
 
+function withTokenOnAttachments(entries: ProgressEntry[]) {
+  const token = getToken();
+  return entries.map((entry) => ({
+    ...entry,
+    attachments: entry.attachments.map((a) => ({
+      ...a,
+      url: absoluteAttachmentUrl(
+        token
+          ? `${a.url}${a.url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
+          : a.url,
+      ),
+    })),
+  }));
+}
+
 export const api = {
   register(email: string, password: string, displayName?: string) {
     return request<{ token: string; user: User }>("/api/auth/register", {
@@ -126,30 +152,45 @@ export const api = {
   getProject(id: string) {
     return request<{ project: Project }>(`/api/projects/${id}`);
   },
-  async listEntries(projectId: string) {
-    const res = await request<{ entries: ProgressEntry[] }>(
-      `/api/projects/${projectId}/entries`,
+  listDirections(
+    projectId: string,
+    status: "active" | "archived" | "all" = "active",
+  ) {
+    return request<{ directions: Direction[] }>(
+      `/api/projects/${projectId}/directions?status=${status}`,
     );
-    const token = getToken();
-    return {
-      entries: res.entries.map((entry) => ({
-        ...entry,
-        attachments: entry.attachments.map((a) => ({
-          ...a,
-          url: absoluteAttachmentUrl(
-            token ? `${a.url}${a.url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : a.url,
-          ),
-        })),
-      })),
-    };
+  },
+  createDirection(projectId: string, title: string, description = "") {
+    return request<{ direction: Direction }>(
+      `/api/projects/${projectId}/directions`,
+      {
+        method: "POST",
+        body: JSON.stringify({ title, description }),
+      },
+    );
+  },
+  updateDirection(
+    id: string,
+    data: Partial<Pick<Direction, "title" | "description" | "status">>,
+  ) {
+    return request<{ direction: Direction }>(`/api/directions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+  async listEntries(directionId: string) {
+    const res = await request<{ entries: ProgressEntry[] }>(
+      `/api/directions/${directionId}/entries`,
+    );
+    return { entries: withTokenOnAttachments(res.entries) };
   },
   createEntry(
-    projectId: string,
+    directionId: string,
     contentJson: unknown,
     contentHtml: string,
   ) {
     return request<{ entry: ProgressEntry }>(
-      `/api/projects/${projectId}/entries`,
+      `/api/directions/${directionId}/entries`,
       {
         method: "POST",
         body: JSON.stringify({ contentJson, contentHtml }),
@@ -187,25 +228,41 @@ export const api = {
   exportUrl(projectId: string, format: "md" | "docx" | "pdf") {
     return `${API_BASE}/api/projects/${projectId}/export/${format}`;
   },
+  directionExportUrl(directionId: string, format: "md" | "docx" | "pdf") {
+    return `${API_BASE}/api/directions/${directionId}/export/${format}`;
+  },
   async downloadExport(projectId: string, format: "md" | "docx" | "pdf") {
-    const token = getToken();
-    const res = await fetch(api.exportUrl(projectId, format), {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) {
-      throw new Error("导出失败");
-    }
-    const blob = await res.blob();
-    const disposition = res.headers.get("content-disposition") || "";
-    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
-    const filename = match
-      ? decodeURIComponent(match[1])
-      : `export.${format}`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    return downloadFromUrl(api.exportUrl(projectId, format), format);
+  },
+  async downloadDirectionExport(
+    directionId: string,
+    format: "md" | "docx" | "pdf",
+  ) {
+    return downloadFromUrl(api.directionExportUrl(directionId, format), format);
   },
 };
+
+async function downloadFromUrl(
+  url: string,
+  format: "md" | "docx" | "pdf",
+) {
+  const token = getToken();
+  const res = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error("导出失败");
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  const filename = match
+    ? decodeURIComponent(match[1])
+    : `export.${format}`;
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(objectUrl);
+}

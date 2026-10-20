@@ -16,7 +16,12 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import dayjs from "dayjs";
-import { api, type ProgressEntry, type Project } from "../api/client";
+import {
+  api,
+  type Direction,
+  type ProgressEntry,
+  type Project,
+} from "../api/client";
 import { useAuth } from "../lib/auth";
 import { EMPTY_DOC, RichEditor } from "../components/RichEditor";
 
@@ -30,6 +35,13 @@ export function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [filter, setFilter] = useState<"active" | "archived">("active");
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [directions, setDirections] = useState<Direction[]>([]);
+  const [directionFilter, setDirectionFilter] = useState<"active" | "archived">(
+    "active",
+  );
+  const [currentDirectionId, setCurrentDirectionId] = useState<string | null>(
+    null,
+  );
   const [entries, setEntries] = useState<ProgressEntry[]>([]);
   const [draftJson, setDraftJson] = useState<unknown>(EMPTY_DOC);
   const [draftHtml, setDraftHtml] = useState("<p></p>");
@@ -41,6 +53,11 @@ export function HomePage() {
     [projects, currentId],
   );
 
+  const currentDirection = useMemo(
+    () => directions.find((d) => d.id === currentDirectionId) ?? null,
+    [directions, currentDirectionId],
+  );
+
   const loadProjects = useCallback(async () => {
     const res = await api.listProjects(filter);
     setProjects(res.projects);
@@ -50,8 +67,20 @@ export function HomePage() {
     });
   }, [filter]);
 
-  const loadEntries = useCallback(async (projectId: string) => {
-    const res = await api.listEntries(projectId);
+  const loadDirections = useCallback(
+    async (projectId: string) => {
+      const res = await api.listDirections(projectId, directionFilter);
+      setDirections(res.directions);
+      setCurrentDirectionId((prev) => {
+        if (prev && res.directions.some((d) => d.id === prev)) return prev;
+        return res.directions[0]?.id ?? null;
+      });
+    },
+    [directionFilter],
+  );
+
+  const loadEntries = useCallback(async (directionId: string) => {
+    const res = await api.listEntries(directionId);
     setEntries(res.entries);
   }, []);
 
@@ -64,13 +93,31 @@ export function HomePage() {
 
   useEffect(() => {
     if (!currentId) {
+      setDirections([]);
+      setCurrentDirectionId(null);
       setEntries([]);
       return;
     }
-    loadEntries(currentId).catch((err) =>
+    setEditing(null);
+    setDraftJson(EMPTY_DOC);
+    setDraftHtml("<p></p>");
+    loadDirections(currentId).catch((err) =>
+      message.error(err instanceof Error ? err.message : "加载方向失败"),
+    );
+  }, [currentId, loadDirections, message]);
+
+  useEffect(() => {
+    if (!currentDirectionId) {
+      setEntries([]);
+      return;
+    }
+    setEditing(null);
+    setDraftJson(EMPTY_DOC);
+    setDraftHtml("<p></p>");
+    loadEntries(currentDirectionId).catch((err) =>
       message.error(err instanceof Error ? err.message : "加载进度失败"),
     );
-  }, [currentId, loadEntries, message]);
+  }, [currentDirectionId, loadEntries, message]);
 
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
@@ -148,8 +195,74 @@ export function HomePage() {
     await loadProjects();
   }
 
-  async function saveEntry() {
+  async function createDirection() {
     if (!currentId) return;
+    let title = "";
+    modal.confirm({
+      title: "新建子课题方向",
+      content: (
+        <Input
+          placeholder="方向名称，例如：实验组 A"
+          onChange={(e) => {
+            title = e.target.value;
+          }}
+        />
+      ),
+      okText: "创建",
+      cancelText: "取消",
+      onOk: async () => {
+        if (!title.trim()) {
+          message.warning("请输入方向名称");
+          throw new Error("empty");
+        }
+        const res = await api.createDirection(currentId, title.trim());
+        message.success("已创建方向");
+        setDirectionFilter("active");
+        await loadDirections(currentId);
+        setCurrentDirectionId(res.direction.id);
+      },
+    });
+  }
+
+  async function renameDirection() {
+    if (!currentDirection || !currentId) return;
+    let title = currentDirection.title;
+    modal.confirm({
+      title: "重命名方向",
+      content: (
+        <Input
+          defaultValue={currentDirection.title}
+          onChange={(e) => {
+            title = e.target.value;
+          }}
+        />
+      ),
+      okText: "保存",
+      cancelText: "取消",
+      onOk: async () => {
+        if (!title.trim()) throw new Error("empty");
+        await api.updateDirection(currentDirection.id, {
+          title: title.trim(),
+        });
+        message.success("已重命名");
+        await loadDirections(currentId);
+      },
+    });
+  }
+
+  async function archiveDirection() {
+    if (!currentDirection || !currentId) return;
+    await api.updateDirection(currentDirection.id, {
+      status: currentDirection.status === "active" ? "archived" : "active",
+    });
+    message.success(
+      currentDirection.status === "active" ? "方向已归档" : "方向已恢复",
+    );
+    await loadDirections(currentId);
+  }
+
+  async function saveEntry() {
+    if (!currentDirectionId) return;
     setSaving(true);
     try {
       if (editing) {
@@ -157,12 +270,12 @@ export function HomePage() {
         message.success("已更新（创建时间不变）");
         setEditing(null);
       } else {
-        await api.createEntry(currentId, draftJson, draftHtml);
+        await api.createEntry(currentDirectionId, draftJson, draftHtml);
         message.success("已添加进度");
       }
       setDraftJson(EMPTY_DOC);
       setDraftHtml("<p></p>");
-      await loadEntries(currentId);
+      await loadEntries(currentDirectionId);
     } catch (err) {
       message.error(err instanceof Error ? err.message : "保存失败");
     } finally {
@@ -174,7 +287,7 @@ export function HomePage() {
     try {
       await api.uploadAttachment(entryId, file);
       message.success("附件已上传");
-      if (currentId) await loadEntries(currentId);
+      if (currentDirectionId) await loadEntries(currentDirectionId);
     } catch (err) {
       message.error(err instanceof Error ? err.message : "上传失败");
     }
@@ -255,7 +368,7 @@ export function HomePage() {
                 justifyContent: "space-between",
                 gap: 16,
                 alignItems: "flex-start",
-                marginBottom: 20,
+                marginBottom: 16,
               }}
             >
               <div>
@@ -263,7 +376,8 @@ export function HomePage() {
                   {current.title}
                 </Typography.Title>
                 <Typography.Paragraph type="secondary" style={{ marginTop: 6 }}>
-                  {current.description || "记录研究进展，按时间轴浏览与导出"}
+                  {current.description ||
+                    "先选择子课题方向，再记录进度；导出可按整课题或当前方向"}
                 </Typography.Paragraph>
               </div>
               <Space wrap>
@@ -276,7 +390,7 @@ export function HomePage() {
                     items: [
                       {
                         key: "md",
-                        label: "导出 Markdown",
+                        label: "导出整课题 Markdown",
                         onClick: () =>
                           api
                             .downloadExport(current.id, "md")
@@ -284,7 +398,7 @@ export function HomePage() {
                       },
                       {
                         key: "docx",
-                        label: "导出 DOCX",
+                        label: "导出整课题 DOCX",
                         onClick: () =>
                           api
                             .downloadExport(current.id, "docx")
@@ -292,12 +406,50 @@ export function HomePage() {
                       },
                       {
                         key: "pdf",
-                        label: "导出 PDF",
+                        label: "导出整课题 PDF",
                         onClick: () =>
                           api
                             .downloadExport(current.id, "pdf")
                             .catch(() => message.error("导出失败")),
                       },
+                      ...(currentDirection
+                        ? [
+                            { type: "divider" as const },
+                            {
+                              key: "dir-md",
+                              label: `导出方向「${currentDirection.title}」MD`,
+                              onClick: () =>
+                                api
+                                  .downloadDirectionExport(
+                                    currentDirection.id,
+                                    "md",
+                                  )
+                                  .catch(() => message.error("导出失败")),
+                            },
+                            {
+                              key: "dir-docx",
+                              label: `导出方向「${currentDirection.title}」DOCX`,
+                              onClick: () =>
+                                api
+                                  .downloadDirectionExport(
+                                    currentDirection.id,
+                                    "docx",
+                                  )
+                                  .catch(() => message.error("导出失败")),
+                            },
+                            {
+                              key: "dir-pdf",
+                              label: `导出方向「${currentDirection.title}」PDF`,
+                              onClick: () =>
+                                api
+                                  .downloadDirectionExport(
+                                    currentDirection.id,
+                                    "pdf",
+                                  )
+                                  .catch(() => message.error("导出失败")),
+                            },
+                          ]
+                        : []),
                     ],
                   }}
                 >
@@ -308,154 +460,233 @@ export function HomePage() {
               </Space>
             </div>
 
-            <div className="entry-card" style={{ marginBottom: 24 }}>
-              <Typography.Text strong>
-                {editing ? "编辑进度" : "写一条新进度"}
-              </Typography.Text>
-              <div style={{ marginTop: 10 }}>
-                <RichEditor
-                  key={editing?.id ?? "new"}
-                  initialJson={editing?.contentJson ?? EMPTY_DOC}
-                  onChange={(json, html) => {
-                    setDraftJson(json);
-                    setDraftHtml(html);
-                  }}
-                />
-              </div>
-              <Space style={{ marginTop: 12 }}>
-                <Button type="primary" loading={saving} onClick={saveEntry}>
-                  {editing ? "保存修改" : "发布进度"}
-                </Button>
-                {editing && (
+            <div className="direction-panel">
+              <div className="direction-panel-head">
+                <Typography.Text strong>子课题方向</Typography.Text>
+                <Space wrap size="small">
+                  <Select
+                    size="small"
+                    value={directionFilter}
+                    onChange={setDirectionFilter}
+                    options={[
+                      { value: "active", label: "进行中" },
+                      { value: "archived", label: "已归档" },
+                    ]}
+                    style={{ width: 100 }}
+                  />
                   <Button
-                    onClick={() => {
-                      setEditing(null);
-                      setDraftJson(EMPTY_DOC);
-                      setDraftHtml("<p></p>");
-                    }}
+                    size="small"
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={createDirection}
                   >
-                    取消编辑
+                    新建方向
                   </Button>
-                )}
-              </Space>
-            </div>
-
-            <div className="timeline">
-              {grouped.length === 0 ? (
-                <Empty description="还没有进度条目" />
+                  {currentDirection && (
+                    <>
+                      <Button size="small" onClick={renameDirection}>
+                        重命名
+                      </Button>
+                      <Button size="small" onClick={archiveDirection}>
+                        {currentDirection.status === "active"
+                          ? "归档方向"
+                          : "恢复方向"}
+                      </Button>
+                    </>
+                  )}
+                </Space>
+              </div>
+              {directions.length === 0 ? (
+                <Empty
+                  description="暂无方向，请新建一个子课题方向"
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                />
               ) : (
-                grouped.map((group) => (
-                  <div key={group.day}>
-                    <div className="day-sep">
-                      {dayjs(group.day).format("YYYY年M月D日")}
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 12,
-                        marginTop: 12,
-                      }}
+                <div className="direction-list">
+                  {directions.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className={
+                        d.id === currentDirectionId
+                          ? "direction-chip active"
+                          : "direction-chip"
+                      }
+                      onClick={() => setCurrentDirectionId(d.id)}
                     >
-                      {group.items.map((entry) => (
-                        <div className="entry-card" key={entry.id}>
-                          <div className="entry-meta">
-                            <span>
-                              创建于{" "}
-                              {dayjs(entry.createdAt).format("HH:mm:ss")}
-                              {entry.updatedAt !== entry.createdAt &&
-                                ` · 编辑于 ${dayjs(entry.updatedAt).format("YYYY-MM-DD HH:mm")}`}
-                            </span>
-                            <Space size="small">
-                              <Button
-                                size="small"
-                                type="link"
-                                onClick={() => {
-                                  setEditing(entry);
-                                  setDraftJson(entry.contentJson);
-                                  setDraftHtml(entry.contentHtml);
-                                  window.scrollTo({ top: 0, behavior: "smooth" });
-                                }}
-                              >
-                                编辑
-                              </Button>
-                              <Button
-                                size="small"
-                                type="link"
-                                onClick={() => {
-                                  const input = document.createElement("input");
-                                  input.type = "file";
-                                  input.onchange = () => {
-                                    const file = input.files?.[0];
-                                    if (file) void attachToEntry(entry.id, file);
-                                  };
-                                  input.click();
-                                }}
-                              >
-                                附件
-                              </Button>
-                              <Button
-                                size="small"
-                                type="link"
-                                danger
-                                onClick={() => {
-                                  modal.confirm({
-                                    title: "删除这条进度？",
-                                    okText: "删除",
-                                    okButtonProps: { danger: true },
-                                    cancelText: "取消",
-                                    onOk: async () => {
-                                      await api.deleteEntry(entry.id);
-                                      message.success("已删除");
-                                      if (currentId) await loadEntries(currentId);
-                                    },
-                                  });
-                                }}
-                              >
-                                删除
-                              </Button>
-                            </Space>
-                          </div>
-                          <div
-                            dangerouslySetInnerHTML={{
-                              __html: entry.contentHtml || "<p>（空内容）</p>",
-                            }}
-                          />
-                          {entry.attachments.length > 0 && (
-                            <div className="attachment-list">
-                              {entry.attachments.map((a) =>
-                                a.mimeType.startsWith("image/") ? (
-                                  <a
-                                    key={a.id}
-                                    className="attachment-chip"
-                                    href={a.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    <img src={a.url} alt={a.fileName} />
-                                    <span>{a.fileName}</span>
-                                  </a>
-                                ) : (
-                                  <a
-                                    key={a.id}
-                                    className="attachment-chip"
-                                    href={a.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    {a.fileName}
-                                  </a>
-                                ),
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))
+                      {d.title}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
+
+            {!currentDirection ? (
+              <Empty description="选择或创建一个子课题方向后开始写进度" />
+            ) : (
+              <>
+                <div className="entry-card" style={{ marginBottom: 24 }}>
+                  <Typography.Text strong>
+                    {editing
+                      ? `编辑进度 · ${currentDirection.title}`
+                      : `写一条新进度 · ${currentDirection.title}`}
+                  </Typography.Text>
+                  <div style={{ marginTop: 10 }}>
+                    <RichEditor
+                      key={editing?.id ?? `new-${currentDirection.id}`}
+                      initialJson={editing?.contentJson ?? EMPTY_DOC}
+                      onChange={(json, html) => {
+                        setDraftJson(json);
+                        setDraftHtml(html);
+                      }}
+                    />
+                  </div>
+                  <Space style={{ marginTop: 12 }}>
+                    <Button type="primary" loading={saving} onClick={saveEntry}>
+                      {editing ? "保存修改" : "发布进度"}
+                    </Button>
+                    {editing && (
+                      <Button
+                        onClick={() => {
+                          setEditing(null);
+                          setDraftJson(EMPTY_DOC);
+                          setDraftHtml("<p></p>");
+                        }}
+                      >
+                        取消编辑
+                      </Button>
+                    )}
+                  </Space>
+                </div>
+
+                <div className="timeline">
+                  {grouped.length === 0 ? (
+                    <Empty description="该方向还没有进度条目" />
+                  ) : (
+                    grouped.map((group) => (
+                      <div key={group.day}>
+                        <div className="day-sep">
+                          {dayjs(group.day).format("YYYY年M月D日")}
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                            marginTop: 12,
+                          }}
+                        >
+                          {group.items.map((entry) => (
+                            <div className="entry-card" key={entry.id}>
+                              <div className="entry-meta">
+                                <span>
+                                  创建于{" "}
+                                  {dayjs(entry.createdAt).format("HH:mm:ss")}
+                                  {entry.updatedAt !== entry.createdAt &&
+                                    ` · 编辑于 ${dayjs(entry.updatedAt).format("YYYY-MM-DD HH:mm")}`}
+                                </span>
+                                <Space size="small">
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    onClick={() => {
+                                      setEditing(entry);
+                                      setDraftJson(entry.contentJson);
+                                      setDraftHtml(entry.contentHtml);
+                                      window.scrollTo({
+                                        top: 0,
+                                        behavior: "smooth",
+                                      });
+                                    }}
+                                  >
+                                    编辑
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    onClick={() => {
+                                      const input =
+                                        document.createElement("input");
+                                      input.type = "file";
+                                      input.onchange = () => {
+                                        const file = input.files?.[0];
+                                        if (file)
+                                          void attachToEntry(entry.id, file);
+                                      };
+                                      input.click();
+                                    }}
+                                  >
+                                    附件
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    danger
+                                    onClick={() => {
+                                      modal.confirm({
+                                        title: "删除这条进度？",
+                                        okText: "删除",
+                                        okButtonProps: { danger: true },
+                                        cancelText: "取消",
+                                        onOk: async () => {
+                                          await api.deleteEntry(entry.id);
+                                          message.success("已删除");
+                                          if (currentDirectionId) {
+                                            await loadEntries(
+                                              currentDirectionId,
+                                            );
+                                          }
+                                        },
+                                      });
+                                    }}
+                                  >
+                                    删除
+                                  </Button>
+                                </Space>
+                              </div>
+                              <div
+                                dangerouslySetInnerHTML={{
+                                  __html:
+                                    entry.contentHtml || "<p>（空内容）</p>",
+                                }}
+                              />
+                              {entry.attachments.length > 0 && (
+                                <div className="attachment-list">
+                                  {entry.attachments.map((a) =>
+                                    a.mimeType.startsWith("image/") ? (
+                                      <a
+                                        key={a.id}
+                                        className="attachment-chip"
+                                        href={a.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        <img src={a.url} alt={a.fileName} />
+                                        <span>{a.fileName}</span>
+                                      </a>
+                                    ) : (
+                                      <a
+                                        key={a.id}
+                                        className="attachment-chip"
+                                        href={a.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        {a.fileName}
+                                      </a>
+                                    ),
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
           </>
         )}
       </main>
