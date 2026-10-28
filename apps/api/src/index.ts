@@ -8,6 +8,7 @@ import { projectRoutes } from "./routes/projects.js";
 import { directionRoutes } from "./routes/directions.js";
 import { entryRoutes } from "./routes/entries.js";
 import { exportRoutes } from "./routes/export.js";
+import { pdfFontStatus } from "./lib/export.js";
 
 const app = new Hono();
 
@@ -20,7 +21,9 @@ app.use(
   }),
 );
 
-app.get("/health", (c) => c.json({ ok: true }));
+const pdfFont = pdfFontStatus();
+
+app.get("/health", (c) => c.json({ ok: true, ...pdfFont }));
 
 app.route("/api/auth", authRoutes);
 app.route("/api/projects", projectRoutes);
