@@ -7,19 +7,25 @@ import {
   ImageRun,
 } from "docx";
 import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import PDFDocument from "pdfkit";
 import { getObjectBuffer } from "./s3.js";
 
-const CJK_FONT_CANDIDATES = [
-  "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-  "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-  "/System/Library/Fonts/PingFang.ttc",
-  "C:\\Windows\\Fonts\\msyh.ttc",
-];
+// Noto Sans SC Regular 2.004（SIL OFL），随仓库放在 assets/fonts。
+// pdfkit 标准字体 Helvetica 是 WinAnsi，不能画中文；找不到 CJK 时禁止回退。
+const BUNDLED_CJK_FONT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../assets/fonts/NotoSansSC-Regular.otf",
+);
 
 function resolveCjkFont() {
-  return CJK_FONT_CANDIDATES.find((p) => existsSync(p));
+  if (!existsSync(BUNDLED_CJK_FONT)) {
+    throw new Error(
+      `缺少中文字体 ${BUNDLED_CJK_FONT}。PDF 必须嵌入 CJK 字体，不能使用 Helvetica。`,
+    );
+  }
+  return BUNDLED_CJK_FONT;
 }
 
 export type ExportAttachment = {
@@ -224,6 +230,7 @@ export async function toDocx(project: ExportProject): Promise<Buffer> {
 }
 
 export async function toPdf(project: ExportProject): Promise<Buffer> {
+  const cjkFont = resolveCjkFont();
   const images = await loadImageBuffers(project);
 
   return new Promise((resolve, reject) => {
@@ -233,17 +240,9 @@ export async function toPdf(project: ExportProject): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const cjkFont = resolveCjkFont();
+    doc.registerFont("NotoSansSC", cjkFont);
     const useFont = (size: number) => {
-      if (cjkFont) {
-        try {
-          doc.font(cjkFont).fontSize(size);
-          return;
-        } catch {
-          // fall through
-        }
-      }
-      doc.font("Helvetica").fontSize(size);
+      doc.font("NotoSansSC").fontSize(size);
     };
 
     useFont(20);

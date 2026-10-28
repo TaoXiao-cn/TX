@@ -13,11 +13,6 @@ RUN npm run build -w @project-progress/api
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
-# PDF 导出中文字体
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends fonts-wqy-zenhei \
-  && rm -rf /var/lib/apt/lists/*
-
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
@@ -25,6 +20,8 @@ COPY apps/web/package.json apps/web/
 RUN npm ci -w @project-progress/api --omit=dev
 
 COPY --from=build /app/apps/api/dist apps/api/dist
+# PDF 中文必须用仓库里的 Noto Sans SC。文泉驿 .ttc 与 Helvetica 都不能嵌入中文。
+COPY apps/api/assets/fonts apps/api/assets/fonts
 
 WORKDIR /app/apps/api
 EXPOSE 8787
