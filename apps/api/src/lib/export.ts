@@ -6,26 +6,61 @@ import {
   HeadingLevel,
   ImageRun,
 } from "docx";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import PDFDocument from "pdfkit";
 import { getObjectBuffer } from "./s3.js";
 
-// Noto Sans SC Regular 2.004（SIL OFL），随仓库放在 assets/fonts。
-// pdfkit 标准字体 Helvetica 是 WinAnsi，不能画中文；找不到 CJK 时禁止回退。
-const BUNDLED_CJK_FONT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../assets/fonts/NotoSansSC-Regular.otf",
-);
+// Noto Sans SC Regular（由 2.004 可变字体实例到 wght=400 的 TrueType，SIL OFL）。
+// 必须是 TTF：pdfkit 把 OTF/CFF 嵌成 CIDFontType0，Chrome / Safari / macOS 预览
+// 不认这种子集，会退回标准字体，中文看起来仍是乱码。Helvetica 是 WinAnsi，同样不能用。
+const CJK_FONT_FILE = "NotoSansSC-Regular.ttf";
+
+function cjkFontCandidates() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return [
+    path.resolve(here, "../../assets/fonts", CJK_FONT_FILE),
+    path.resolve(here, "../fonts", CJK_FONT_FILE),
+    path.join("/usr/local/share/fonts", CJK_FONT_FILE),
+  ];
+}
 
 function resolveCjkFont() {
-  if (!existsSync(BUNDLED_CJK_FONT)) {
+  const found = cjkFontCandidates().find((p) => existsSync(p));
+  if (!found) {
     throw new Error(
-      `缺少中文字体 ${BUNDLED_CJK_FONT}。PDF 必须嵌入 CJK 字体，不能使用 Helvetica。`,
+      `缺少中文字体 ${CJK_FONT_FILE}（已查找 ${cjkFontCandidates().join(" , ")}）。PDF 必须嵌入 TrueType CJK，不能使用 Helvetica 或 OTF。`,
     );
   }
-  return BUNDLED_CJK_FONT;
+  return found;
+}
+
+export function pdfFontStatus() {
+  const file = resolveCjkFont();
+  const magic = readFileSync(file).subarray(0, 4);
+  // TrueType 轮廓：00 01 00 00。OTTO 是 CFF/OTF，阅读器会画乱。
+  if (!magic.equals(Buffer.from([0x00, 0x01, 0x00, 0x00]))) {
+    throw new Error(
+      `中文字体必须是 TrueType，当前 ${file} magic=${magic.toString("hex")}`,
+    );
+  }
+  return { pdfFont: "NotoSansSC-Regular", pdfFontFormat: "truetype" as const };
+}
+
+function assertEmbeddedCjk(pdf: Buffer) {
+  const bad =
+    pdf.includes(Buffer.from("WinAnsiEncoding")) ||
+    pdf.includes(Buffer.from("/Helvetica")) ||
+    pdf.includes(Buffer.from("CIDFontType0"));
+  const ok =
+    pdf.includes(Buffer.from("NotoSansSC")) &&
+    pdf.includes(Buffer.from("CIDFontType2"));
+  if (bad || !ok) {
+    throw new Error(
+      "PDF 未以 TrueType（CIDFontType2）嵌入 Noto Sans SC，拒绝返回会乱码的文件",
+    );
+  }
 }
 
 export type ExportAttachment = {
@@ -233,8 +268,8 @@ export async function toPdf(project: ExportProject): Promise<Buffer> {
   const cjkFont = resolveCjkFont();
   const images = await loadImageBuffers(project);
 
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: "A4" });
+  const pdf = await new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: "A4", font: cjkFont });
     const chunks: Buffer[] = [];
     doc.on("data", (c) => chunks.push(c));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -309,4 +344,6 @@ export async function toPdf(project: ExportProject): Promise<Buffer> {
 
     doc.end();
   });
+  assertEmbeddedCjk(pdf);
+  return pdf;
 }

@@ -97,7 +97,7 @@ docker-compose.yml
 
 ## PDF 中文
 
-导出 PDF 必须嵌入仓库自带的 Noto Sans SC（`apps/api/assets/fonts/NotoSansSC-Regular.otf`，SIL OFL）。pdfkit 默认 Helvetica 是 WinAnsi，不能画中文，会变成乱码。不要改回系统字体路径，也不要在缺字时回退到 Helvetica。生产镜像由 `apps/api/Dockerfile` 复制该字体，不依赖宿主机是否安装了字体。
+导出 PDF 必须嵌入仓库自带的 **TrueType** Noto Sans SC（`apps/api/assets/fonts/NotoSansSC-Regular.ttf`，SIL OFL）。pdfkit 默认 Helvetica 是 WinAnsi，不能画中文。OTF/CFF 会被嵌成 CIDFontType0，Chrome、Safari、macOS 预览不认这种子集，中文仍会乱码。不要改回 OTF、系统字体路径，也不要在缺字时回退到 Helvetica。生产镜像由 `apps/api/Dockerfile` 复制该 TTF，不依赖宿主机是否安装了字体。`/health` 会返回 `pdfFontFormat: "truetype"`。
 
 Markdown / DOCX 保存的是 Unicode 文本，不依赖嵌入字体。
 

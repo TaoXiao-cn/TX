@@ -20,8 +20,10 @@ COPY apps/web/package.json apps/web/
 RUN npm ci -w @project-progress/api --omit=dev
 
 COPY --from=build /app/apps/api/dist apps/api/dist
-# PDF 中文必须用仓库里的 Noto Sans SC。文泉驿 .ttc 与 Helvetica 都不能嵌入中文。
-COPY apps/api/assets/fonts apps/api/assets/fonts
+# 必须是 TrueType。OTF/CFF 会嵌成 CIDFontType0，Chrome/Safari/预览会退回 Helvetica，中文仍乱码。
+COPY apps/api/assets/fonts/NotoSansSC-Regular.ttf /usr/local/share/fonts/NotoSansSC-Regular.ttf
+COPY apps/api/assets/fonts/NotoSansSC-Regular.ttf /app/apps/api/dist/fonts/NotoSansSC-Regular.ttf
+COPY apps/api/assets/fonts /app/apps/api/assets/fonts
 
 WORKDIR /app/apps/api
 EXPOSE 8787
