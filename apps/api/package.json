@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "smoke:export": "tsx src/lib/export.smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",
