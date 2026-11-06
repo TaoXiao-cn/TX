@@ -2,9 +2,12 @@ import { Hono } from "hono";
 import { pool } from "../db/pool.js";
 import { requireAuth, type AuthUser } from "../lib/auth.js";
 import {
+  collectAttachmentIdsFromEntry,
   toDocx,
   toMarkdown,
   toPdf,
+  type ExportAttachment,
+  type ExportEntry,
   type ExportProject,
 } from "../lib/export.js";
 import { assertDirectionOwned } from "./directions.js";
@@ -14,6 +17,15 @@ type Vars = { user: AuthUser };
 export const exportRoutes = new Hono<{ Variables: Vars }>();
 
 exportRoutes.use("*", requireAuth);
+
+function mapAttachmentRow(a: Record<string, unknown>): ExportAttachment {
+  return {
+    id: String(a.id),
+    fileName: String(a.file_name),
+    mimeType: String(a.mime_type),
+    storageKey: String(a.storage_key),
+  };
+}
 
 async function loadProjectExport(
   projectId: string,
@@ -57,25 +69,46 @@ async function loadProjectExport(
     atts = res.rows;
   }
 
-  const mapEntry = (e: Record<string, unknown>) => ({
+  const mapEntry = (e: Record<string, unknown>): ExportEntry => ({
     id: String(e.id),
-    contentHtml: String(e.content_html),
+    contentHtml: String(e.content_html ?? ""),
     contentJson: e.content_json,
     createdAt: String(e.created_at),
     updatedAt: String(e.updated_at),
     attachments: atts
-      .filter((a) => a.entry_id === e.id)
-      .map((a) => ({
-        id: String(a.id),
-        fileName: String(a.file_name),
-        mimeType: String(a.mime_type),
-        storageKey: String(a.storage_key),
-      })),
+      .filter((a) => String(a.entry_id) === String(e.id))
+      .map((a) => mapAttachmentRow(a)),
   });
+
+  // 先扫 TipTap 正文里的 /api/attachments/:id，补齐未挂在当前条目附件列表里的行
+  const draftEntries = entries.rows.map(mapEntry);
+  const neededIds = new Set<string>();
+  for (const entry of draftEntries) {
+    for (const id of collectAttachmentIdsFromEntry(entry)) neededIds.add(id);
+  }
+  const known = new Set(atts.map((a) => String(a.id)));
+  const missing = [...neededIds].filter((id) => !known.has(id));
+  if (missing.length) {
+    const extra = await pool.query(
+      `SELECT a.* FROM attachments a
+       JOIN progress_entries e ON e.id = a.entry_id
+       JOIN projects p ON p.id = e.project_id
+       WHERE a.id = ANY($1::uuid[]) AND p.owner_user_id = $2`,
+      [missing, userId],
+    );
+    atts = atts.concat(extra.rows);
+  }
+
+  const attachmentsById: Record<string, ExportAttachment> = {};
+  for (const a of atts) {
+    const mapped = mapAttachmentRow(a);
+    attachmentsById[mapped.id] = mapped;
+  }
 
   return {
     title: project.rows[0].title,
     description: project.rows[0].description,
+    attachmentsById,
     directions: directions.rows.map((d) => ({
       title: String(d.title),
       entries: entries.rows
@@ -95,7 +128,7 @@ async function buildExportResponse(
   fileBase: string,
 ): Promise<Response | { error: string; status: 400 }> {
   if (format === "md") {
-    const md = toMarkdown(project);
+    const md = await toMarkdown(project);
     return new Response(md, {
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",
